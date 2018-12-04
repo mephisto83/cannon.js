@@ -18,7 +18,7 @@
     <script>
 
         var demo = new CANNON.Demo();
-        var mass = 1;
+        var mass = 2;
         var vehicle;
 
         demo.addScene("car",function(){
@@ -30,7 +30,7 @@
             var groundMaterial = new CANNON.Material("groundMaterial");
             var wheelMaterial = new CANNON.Material("wheelMaterial");
             var wheelGroundContactMaterial = window.wheelGroundContactMaterial = new CANNON.ContactMaterial(wheelMaterial, groundMaterial, {
-                friction: 0.3,
+                friction: 0.5,
                 restitution: 0,
                 contactEquationStiffness: 1000
             });
@@ -41,7 +41,7 @@
             var chassisShape;
             var centerOfMassAdjust = new CANNON.Vec3(0, 0, -1);
             chassisShape = new CANNON.Box(new CANNON.Vec3(5, 2, 0.5));
-            var chassisBody = new CANNON.Body({ mass: 1 });
+            var chassisBody = new CANNON.Body({ mass: 5 });
             chassisBody.addShape(chassisShape, centerOfMassAdjust);
             chassisBody.position.set(0, 0, 0);
 
@@ -117,7 +117,7 @@
             } else {
                 var mock = false;
                 var matrix = [];
-                var sizeX = 64,
+                var sizeX = 164,
                     sizeY = sizeX;
 
                 for (var i = 0; i < sizeX; i++) {
@@ -132,7 +132,7 @@
                 }
 
                 var hfShape = new CANNON.Heightfield(matrix, {
-                    elementSize: 300 / sizeX
+                    elementSize: 3000 / sizeX
                 });
                 var hfBody;
 
@@ -166,6 +166,7 @@
                 }
             }
         });
+        
 
         demo.start();
 
@@ -174,7 +175,7 @@
 
         var maxSteerVal = Math.PI / 8;
         var maxSpeed = 10;
-        var maxForce = 100;
+        var maxForce = 600;
         function handler(event){
             var up = (event.type == 'keyup');
 
