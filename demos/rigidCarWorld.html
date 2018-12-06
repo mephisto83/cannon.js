@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>cannon.js - RigidVehicle</title>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="css/style.css" type="text/css" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+    <script src="../build/cannon.js"></script>
+    <script src="../build/cannon.demo.js"></script>
+    <script src="../libs/dat.gui.js"></script>
+    <script src="../libs/Three.js"></script>
+    <script src="../libs/TrackballControls.js"></script>
+    <script src="../libs/Detector.js"></script>
+    <script src="../libs/Stats.js"></script>
+    <script src="../libs/smoothie.js"></script>
+    <!-- rljs -->
+    <script type="text/javascript" src="lib/rl.js"></script>
+
+    <!-- environment dynamics -->
+    <script src="carworldfunctions.js"></script>
+    <script src="carcomponents.js"></script>
+    <script>
+
+        var demo = new CANNON.Demo();
+        var mass = 2;
+        var vehicle;
+
+        demo.addScene("car", function () {
+            var world = demo.getWorld();
+            world.gravity.set(0, 0, -30);
+            world.broadphase = new CANNON.SAPBroadphase(world);
+            world.defaultContactMaterial.friction = 0.2;
+
+
+            var materials = createGroundContactMaterial();
+            var {
+                itemVehicleContactMaterial,
+                vehicleMaterial,
+                itemMaterial,
+                groundMaterial,
+                wheelMaterial,
+                wheelGroundContactMaterial
+            } = materials;
+            window.wheelGroundContactMaterial = wheelGroundContactMaterial;
+            window.itemVehicleContactMaterial = itemVehicleContactMaterial;
+
+            // We must add the contact materials to the world
+            world.addContactMaterial(wheelGroundContactMaterial);
+
+            var vehicle = createVehicle({ wheelMaterial, vehicleMaterial });
+
+
+            // Constrain wheels
+            var constraints = [];
+
+            addVehicleVisuals(demo, vehicle);
+            vehicle.addToWorld(world);
+
+            var hfBody = addGround(groundMaterial);
+
+            world.addBody(hfBody);
+            demo.addVisual(hfBody);
+            var AgentCls = createAgent();
+
+            var rlService = rl({
+                agents: ([...new Array(3)]).map((t, i) => {
+                    var agent_vehicle = createVehicle({ wheelMaterial, vehicleMaterial });
+                    var agent = new AgentCls({
+                        radius: 100,
+                        numberOfEyes: 6,
+                        initPosition: new THREE.Vector3(0, (i + 1) * 100, 100)
+                    });
+
+                    agent.body(agent_vehicle);
+                    addVehicleVisuals(demo, agent_vehicle);
+                    agent_vehicle.addToWorld(world);
+                    agent.init();
+
+                    return agent;
+                })
+            });
+            console.log(rlService);
+            rlService.start();
+            console.log(world.collisionMatrix);
+            console.log(vehicle);
+            window.vehicle = vehicle;
+            window.world = world;
+        });
+
+
+        demo.start();
+
+        document.onkeydown = handler;
+        document.onkeyup = handler;
+
+        var maxSteerVal = Math.PI / 8;
+        var maxSpeed = 10;
+        var maxForce = 600;
+        function handler(event) {
+            var up = (event.type == 'keyup');
+
+            if (!up && event.type !== 'keydown')
+                return;
+
+            switch (event.keyCode) {
+
+                case 38: // forward
+                    vehicle.setWheelForce(up ? 0 : maxForce, 2);
+                    vehicle.setWheelForce(up ? 0 : -maxForce, 3);
+                    break;
+
+                case 40: // backward
+                    vehicle.setWheelForce(up ? 0 : -maxForce / 2, 2);
+                    vehicle.setWheelForce(up ? 0 : maxForce / 2, 3);
+                    break;
+
+                case 39: // right
+                    vehicle.setSteeringValue(up ? 0 : -maxSteerVal, 0);
+                    vehicle.setSteeringValue(up ? 0 : -maxSteerVal, 1);
+                    break;
+
+                case 37: // left
+                    vehicle.setSteeringValue(up ? 0 : maxSteerVal, 0);
+                    vehicle.setSteeringValue(up ? 0 : maxSteerVal, 1);
+                    break;
+
+            }
+        }
+
+    </script>
+</body>
+
+</html>
