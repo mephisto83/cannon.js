@@ -234,6 +234,7 @@ function rl(ops) {
         }
     }
     return {
-        start
+        start,
+        tick
     }
 }

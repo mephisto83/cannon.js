@@ -1,4 +1,9 @@
 const AGENT_TYPE = 4;
+const OBSTACLE = 3;
+const REWARD = 2;
+const BOUNDARY = 1;
+const VISIBLE_TYPES = [REWARD, BOUNDARY];
+
 function getEyes(count, range) {
     var r = 1;
     var total = 0;
@@ -14,11 +19,10 @@ function getEyes(count, range) {
         var Mp = Math.round(2 * Math.PI * Math.sin(v) / dp);
         for (var n = 0; n < Mp; n++) {
             var p = 2 * Math.PI * n / Mp;
-            eyes.push(createEye({
-                x: Math.sin(v) * Math.cos(p) * r,
-                y: Math.sin(v) * Math.sin(p) * r,
-                z: Math.cos(v) * r,
-            }, range));
+            eyes.push(createEye(new THREE.Vector3(
+                Math.sin(v) * Math.cos(p) * r,
+                Math.sin(v) * Math.sin(p) * r,
+                Math.cos(v) * r), range));
             total++;
         }
     }
@@ -30,15 +34,26 @@ function createEye(vector, range) {
     var Eye = function (angle) {
         this.angle = angle; // angle relative to agent its on
         this.max_range = range || 120;
+        this.length = range;
         this.sensed_proximity = range || 120; // what the eye is seeing. will be set in world.tick()
         this.sensed_type = -1; // what does the eye see?
 
         this.velocity = new THREE.Vector3(0, 0, 0); // sensed velocity
     }
 
+    Eye.prototype = {
+        position: function () {
+            return this.angle.clone().multiplyScalar(this.length);
+        }
+    }
+
     return new Eye(vector);
 }
-function createAgent() {
+
+function createAgent(ops) {
+    ops = ops || { range: 100 };
+
+    var { range } = ops;
     // A single agent
     var Agent = function (ops) {
         var { position, velocity, direction, radius, initPosition, numberOfEyes } = ops;
@@ -58,7 +73,7 @@ function createAgent() {
 
         // properties
         this.rad = radius;
-        this.eyes = getEyes(numberOfEyes)
+        this.eyes = getEyes(numberOfEyes, range)
 
         this.brain = null; // set from outside
 
@@ -74,7 +89,7 @@ function createAgent() {
         this.prevactionix = -1;
         var direction_parts = 3;
         var velocity_parts = 3;
-        var eye_parts = 5;
+        var eye_parts = 4 + VISIBLE_TYPES.length;
 
         this.num_states = direction_parts + velocity_parts + this.eyes.length * eye_parts;
     }
@@ -115,23 +130,48 @@ function createAgent() {
             // create input to brain
             var num_eyes = this.eyes.length;
             var ne = num_eyes * 5;
-            var input_array = new Array(this.num_states);
+            var input_array = [];//new Array(this.num_states);
+
             for (var i = 0; i < num_eyes; i++) {
+                var offset = 0;
                 var e = this.eyes[i];
-                input_array[i * 5] = 1.0;
-                input_array[i * 5 + 1] = 1.0;
-                input_array[i * 5 + 2] = 1.0;
-                input_array[i * 5 + 3] = e.vx; // velocity information of the sensed target
-                input_array[i * 5 + 4] = e.vy;
+
                 if (e.sensed_type !== -1) {
+                    input_array.push(e.sensed_direction.x); // velocity information of the sensed target
+                    input_array.push(e.sensed_direction.y);
+                    input_array.push(e.sensed_direction.z);
+
+                    input_array.push(e.sensed_proximity);
                     // sensed_type is 0 for wall, 1 for food and 2 for poison.
                     // lets do a 1-of-k encoding into the input array
-                    input_array[i * 5 + e.sensed_type] = e.sensed_proximity / e.max_range; // normalize to [0,1]
+                    VISIBLE_TYPES.map(t => {
+                        if (e.sensed_type === t) {
+                            input_array.push(1); // normalize to [0,1]
+                        }
+                        else {
+                            input_array.push(0); // normalize to [0,1]
+                        }
+                    })
+                }
+                else {
+                    input_array.push(0, 0, 0, 0);
+                    VISIBLE_TYPES.map(t => {
+                        input_array.push(0); // normalize to [0,1]
+                    });
                 }
             }
-            // proprioception and orientation
-            input_array[ne + 0] = this.v.x;
-            input_array[ne + 1] = this.v.y;
+            debugger;
+            // // proprioception and orientation
+            // input_array[ne + 0] = this.v.x;
+            // input_array[ne + 1] = this.v.y;
+
+            input_array.push(this.velocity.x);
+            input_array.push(this.velocity.y);
+            input_array.push(this.velocity.z);
+
+            input_array.push(this.direction.x);
+            input_array.push(this.direction.y);
+            input_array.push(this.direction.z);
 
             this.action = this.brain.act(input_array);
             //var action = this.actions[actionix];
@@ -162,9 +202,6 @@ function createAgent() {
     return Agent;
 }
 
-
-
-
 // item is circle thing on the floor that agent can interact with (see or eat, etc)
 var Item = function (position, velocity, type, id) {
     this.position = position; // position
@@ -191,7 +228,8 @@ var World = function (cannonWorld) {
     for (var k = 0; k < 50; k++) {
         var position = new THREE.Vector3(randf(20, this.W - 20), randf(20, this.H - 20), 0);;
         var velocity = new THREE.Vector3(0, 0, 0);
-        var t = randi(1, 3); // food or poison (1 and 2)
+        var types = VISIBLE_TYPES;
+        var t = types[randi(0, types.length)]; // food or poison (1 and 2)
         var it = new Item(position, velocity, t, k);
         this.items.push(it);
     }
@@ -241,7 +279,8 @@ World.prototype = {
         return minres;
     },
     see: function (agent, eye) {
-        var postion = agent.position.clone().add(eye.position);
+
+        var position = agent.position.clone().vadd(eye.position());
         var sortedItems = [...this.items, ...this.agents].filter(t => {
             return agent !== t && eye.max_range > position.distanceTo(t.position);
         }).sort((a, b) => {
@@ -267,7 +306,9 @@ World.prototype = {
                 var res = this.see(a, e);
                 if (res) {
                     // eye collided with wall
-                    e.sensed_proximity = res.position.distanceTo(a.position);
+                    var eye_position = a.position.clone().vadd(e.position());
+                    e.sensed_proximity = res.position.distanceTo(eye_position) / e.max_range;
+                    e.sensed_direction = res.position.sub ? res.position.sub(eye_position).normalize() : res.position.vsub(eye_position).unit();
                     e.sensed_type = res.type;
                     if ('velocity' in res) {
                         e.velocity = res.velocity;

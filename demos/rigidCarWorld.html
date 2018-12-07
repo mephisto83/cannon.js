@@ -24,8 +24,13 @@
     <script src="carworldfunctions.js"></script>
     <script src="carcomponents.js"></script>
     <script>
-
-        var demo = new CANNON.Demo();
+        var animateFunc = null;
+        var demo = new CANNON.Demo({
+            useStep: true,
+            getAnimate: anim => {
+                animateFunc = anim;
+            }
+        });
         var mass = 2;
         var vehicle;
 
@@ -57,8 +62,8 @@
             // Constrain wheels
             var constraints = [];
 
-            addVehicleVisuals(demo, vehicle);
-            vehicle.addToWorld(world);
+            // addVehicleVisuals(demo, vehicle);
+            // vehicle.addToWorld(world);
 
             var hfBody = addGround(groundMaterial);
 
@@ -89,6 +94,9 @@
             console.log(vehicle);
             window.vehicle = vehicle;
             window.world = world;
+            window.animateFunc = animateFunc;
+            console.log(animateFunc);
+            rlService.tick();
         });
 
 
