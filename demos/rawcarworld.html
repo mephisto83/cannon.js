@@ -1,0 +1,812 @@
+<html>
+
+<head>
+    <title>
+        raw car
+    </title>
+    <style>
+        html,
+        body {
+            margin: 0px;
+            padding: 0px;
+        }
+
+        body {
+            background-color: whitesmoke;
+        }
+
+        #displayCanvas {
+            border: 1px solid black;
+        }
+    </style>
+    <script type="text/javascript" src="lib/rl.js"></script>
+    <script src="carworldfunctions.js"></script>
+    <script src="carcomponents.js"></script>
+</head>
+
+<body>
+    <canvas id="displayCanvas">
+        Your browser doesn't support HTML5.
+    </canvas>
+    <div id="output"></div>
+    <script>
+        var canvas = null;
+        var context = null;
+        var canvasWidth = 800;
+        var canvasHeight = 600;
+        var MAX_THRUST = .19;
+        var MAX_FRICTION = .045;
+        var AGENT_COUNT = 10;
+        var VISION_DISTANCE = 5;
+        var trackWidth = 100;
+        var TRACK_COUNT = 200;
+        const LEFT = 'LEFT';
+        const RIGHT = 'RIGHT';
+        const UP = 'UP';
+        const DOWN = 'DOWN';
+        var best_brains = [];
+        var current_agents = [];
+        try {
+            var b = localStorage.getItem('RCW');
+            best_brains = JSON.parse(b);
+        } catch (e) {
+            console.log('no brains');
+        }
+        var RCW = {
+            generation: 0
+        }
+
+        window.onload = function () {
+            canvas = document.getElementById("displayCanvas");
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            MasterStart();
+        }
+        function MasterStart() {
+            canvas = document.getElementById("displayCanvas");
+            context = canvas.getContext("2d");
+
+            var game = new Game(canvas, context);
+
+            // Add the canvas boundaries as walls
+
+            game.generateTrack();
+            var rlWorld = startRl();
+            game.rlWorld = rlWorld;
+            game.start();
+        }
+        function Game(canvas, context) {
+            this.canvas = canvas;
+            this.context = context;
+            this.inputManager = new InputManager(this);
+            this.inputManager.init();
+            this.clearColor = "#FFFFFF";
+            this.walls = [];
+            this.actors = [];
+            this.hitpoints = [];
+            this.tracks = [];
+            this.trackMap = {};
+        }
+        Game.prototype.addToTrackMap = function (left, top, level) {
+            if (this.trackMap[`${left}-${top}-${level}`]) {
+                return level + 1;
+            }
+            this.trackMap[`${left}-${top}-${level}`] = true;
+            return level;
+        }
+        Game.prototype.generateTrack = function (ops) {
+            ops = ops || {};
+            this.trackMap = {};
+            var {
+                left = 0,
+                top = 0,
+                width = trackWidth,
+                height = trackWidth,
+                trackCount = TRACK_COUNT
+            } = ops;
+            let game = this;
+            var trackMap = {};
+            var lastTrack = null;
+            var currentLevel = 0;
+            var me = this;
+            for (var i = 0; i < trackCount; i++) {
+                var trackTurnOptions = [LEFT, RIGHT, UP, DOWN].filter(option => {
+                    if (lastTrack && lastTrack.direction === option) {
+                        return false;
+                    }
+                    return true;
+                });
+                var direction = trackTurnOptions[Math.floor(Math.random() * trackTurnOptions.length)];
+                var newLevel = me.addToTrackMap(left, top, currentLevel);
+                var track = new Track(new Point(left, top), new Point(left + width, top + height), direction, newLevel, newLevel === currentLevel);
+                currentLevel = newLevel;
+                lastTrack = track;
+                switch (direction) {
+                    case LEFT:
+                        left = left + width;
+                        break;
+                    case RIGHT:
+                        left = left - width;
+                        break;
+                    case UP:
+                        top = top + height;
+                        break;
+                    case DOWN:
+                        top = top - height;
+                        break;
+                }
+
+                game.tracks.push(track);
+                game.walls.push(...track.walls);
+            }
+        }
+
+        Game.prototype.start = function () {
+            this.actors = this.rlWorld.agents;
+            this.update();
+            this.rlWorld.tick();
+            if (!window.skipRender)
+                this.render();
+            if (this.notDone) {
+                window.requestAnimationFrame(this.start.bind(this));
+            }
+            else {
+                var best_agents = current_agents.sort((a, b) => {
+                    return b.score() - a.score();
+                }).slice(0, 5);
+
+                best_brains = best_agents.map(t => t.brain.toJSON());
+                console.log(current_agents.slice(0, 5).map(t => t.score()));
+                RCW.generation++;
+                console.log(`Generation ${RCW.generation}`);
+                localStorage.setItem('RCW', JSON.stringify(best_brains));
+                current_agents = [];
+                MasterStart();
+            }
+        }
+
+        Game.prototype.clear = function () {
+            this.context.save();
+            this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.context.fillStyle = this.clearColor;
+            this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.context.restore();
+        }
+
+        Game.prototype.update = function () {
+            var mouseX = this.inputManager.mouseX;
+            var mouseY = this.inputManager.mouseY;
+            this.hitpoints = [];
+            // For every wall...
+            // for (var i = 0; i < this.walls.length; i++) {
+            //     var wall = this.walls[i];
+            //     // Cast a ray to every point of the current wall
+            //     for (var j = 0; j < wall.points.length; j++) {
+            //         var closestPoint = null;
+            //         if (j == 0) closestPoint = wall.p1;
+            //         if (j == 1) closestPoint = wall.p2;
+            //         var ray = new Wall(new Point(mouseX, mouseY), new Point(closestPoint.x, closestPoint.y));
+            //         var minDistance = ray.length();
+            //         // Check every wall for intersection
+            //         for (var k = 0; k < this.walls.length; k++) {
+            //             var checkWall = this.walls[k];
+            //             if (wall != checkWall) {
+            //                 if (checkWall.intersectsWith(ray)) {
+            //                     // If checkWall intersects with our ray we have to check it's intersection point's distance
+            //                     // If the distance is smaller than the current minimum set intersectionPoint as the closest
+            //                     // point and save the distance.
+            //                     var intersectionPoint = checkWall.intersectionPoint(ray);
+            //                     var tempRay = new Wall(new Point(mouseX, mouseY), new Point(intersectionPoint.x, intersectionPoint.y));
+            //                     if (tempRay.length() < minDistance) {
+            //                         closestPoint = intersectionPoint;
+            //                         minDistance = tempRay.length();
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //         this.hitpoints.push(closestPoint);
+            //     }
+            // }
+            var isin = false;
+            var tracks = this.tracks;
+            // for (var i = 0; i < this.tracks.length; i++) {
+            //     var track = this.tracks[i];
+            //     if (track.isInside({ x: mouseX, y: mouseY })) {
+            //         isin = true;
+            //         break;
+            //     }
+            // }
+            this.actors.filter(x => !x.dead).map(actor => {
+                actor.update(tracks);
+            });
+            this.notDone = this.actors.find(x => !x.dead)
+            var outputs = document.getElementById('output');
+            var doc = '';
+            this.actors.map((t, ind) => {
+                doc += `<div>Actor ${ind} : (${t.speed.x},${t.speed.y})</div>`
+            })
+            outputs.innerHTML = doc;
+        }
+
+        Game.prototype.render = function () {
+            this.clear();
+            this.context.save();
+            this.context.font = "30px";
+            // Render all the walls
+            var anAgent = this.actors.find(x => !x.dead);
+            var activeLevel = null;
+            if (anAgent) {
+                activeLevel = anAgent.trackLevel();
+                this.context.translate(-anAgent.x + canvasWidth / 2, - anAgent.y + canvasHeight / 2);
+            }
+            else {
+                this.context.translate(0, 0);
+            }
+
+            for (var i = this.walls.length; i--;) {
+                var wall = this.walls[i];
+                var lineWidth = 3;
+                var skip = false;
+                if (!wall.boundary) {
+                    if (activeLevel !== null) {
+                        if (wall.track && activeLevel === wall.track.level) {
+                            var diff = activeLevel - wall.track.level;
+                            lineWidth -= diff;
+                        }
+                        else {
+                            skip = true;
+                        }
+                    }
+                    if (!skip) {
+                        this.context.lineWidth = lineWidth;
+                        this.context.strokeStyle = wall.gate ? (wall.open ? "#00FF00" : "#FF0000") : "#000000",
+                            this.context.beginPath();
+                        this.context.moveTo(wall.p1.x, wall.p1.y);
+                        this.context.lineTo(wall.p2.x, wall.p2.y);
+                        this.context.stroke();
+                        this.context.strokeText(i, wall.p1.x - (trackWidth / 2), wall.p1.y - (trackWidth / 2));
+                    }
+                }
+            }
+            //this.context.stroke();
+            // Render cursor's position
+            this.context.fillStyle = "#FF0000";
+            var mouseX = this.inputManager.mouseX;
+            var mouseY = this.inputManager.mouseY;
+            this.context.fillRect(mouseX - 5, mouseY - 5, 10, 10);
+            // Render all the hitpoints
+            this.context.fillStyle = "#0000FF";
+            var mouseX = this.inputManager.mouseX;
+            var mouseY = this.inputManager.mouseY;
+            this.context.strokeStyle = "#FF0000",
+                this.context.beginPath();
+            for (var i = 0; i < this.hitpoints.length; i++) {
+                var hitpoint = this.hitpoints[i];
+                this.context.moveTo(mouseX, mouseY);
+                this.context.lineTo(hitpoint.x, hitpoint.y);
+                this.context.fillRect(hitpoint.x - 5, hitpoint.y - 5, 10, 10);
+            }
+            this.context.stroke();
+            // this.context.restore();
+
+            this.context.fillStyle = "#00FF00";
+            this.context.beginPath();
+            for (var i = 0; i < this.actors.length; i++) {
+                var actor = this.actors[i];
+                if (activeLevel === actor.trackLevel()) {
+                    this.context.fillRect(actor.x - 5, actor.y - 5, 10, 10);
+                }
+            }
+
+            this.context.stroke();
+            this.context.restore();
+        }
+
+        function Track(p1, p2, direction, level, transitionLevel) {
+            var maxx, minx, maxy, miny;
+            var me = this;
+            this.level = level;
+            this.transitionLevel = transitionLevel;
+            [p1, p2].map(point => {
+                if (maxx === undefined || maxx < point.x) {
+                    maxx = point.x;
+                }
+                if (maxy === undefined || maxy < point.y) {
+                    maxy = point.y;
+                }
+                if (minx === undefined || minx > point.x) {
+                    minx = point.x;
+                }
+                if (miny === undefined || miny > point.y) {
+                    miny = point.y;
+                }
+            });
+
+            var wall_1 = new Wall(new Point(minx - 1, miny - 1), new Point(maxx + 1, miny - 1));
+
+            var wall_2 = new Wall(new Point(maxx + 1, miny - 1), new Point(maxx + 1, maxy + 1));
+
+            var wall_3 = new Wall(new Point(maxx + 1, maxy + 1), new Point(minx - 1, maxy + 1));
+
+            var wall_4 = new Wall(new Point(minx - 1, maxy + 1), new Point(minx - 1, miny - 1));
+
+            this.direction = direction;
+            var wall1 = new Wall(new Point(minx, miny), new Point(maxx, miny));
+            wall1.open = UP === direction;
+            wall1.position = UP;
+            wall1.gate = true;
+            this.topWall = wall1;
+
+            var wall2 = new Wall(new Point(maxx, miny), new Point(maxx, maxy));
+            wall2.open = LEFT === direction;
+            wall2.position = LEFT;
+            wall2.gate = true;
+            this.leftWall = wall2;
+
+            var wall3 = new Wall(new Point(maxx, maxy), new Point(minx, maxy));
+            wall3.position = DOWN;
+            wall3.open = DOWN === direction;
+            wall3.gate = true;
+
+            var wall4 = new Wall(new Point(minx, maxy), new Point(minx, miny));
+            wall4.open = RIGHT === direction;
+            wall4.position = RIGHT;
+            wall4.gate = true;
+
+
+
+
+            this.outerWalls = [wall_1, wall_2, wall_3, wall_4];
+            this.outerWalls.map(t => t.boundary = true);
+            this.walls = [wall1, wall2, wall3, wall4, ...this.outerWalls].map(t => {
+                if (t) {
+                    t.track = me;
+                }
+                return t;
+            });
+
+        }
+        Track.prototype.isInside = function (item) {
+            var mouseX = item.x;
+            var mouseY = item.y;
+            this.hitpoints = [];
+            // For every wall...
+            for (var i = 0; i < this.walls.length; i++) {
+                var wall = this.walls[i];
+                // Cast a ray to every point of the current wall
+                for (var j = 0; j < wall.points.length; j++) {
+                    var closestPoint = null;
+                    if (j == 0) closestPoint = wall.p1;
+                    if (j == 1) closestPoint = wall.p2;
+                    closestPoint.wall = wall;
+                    var ray = new Wall(new Point(mouseX, mouseY), new Point(closestPoint.x, closestPoint.y));
+                    var minDistance = ray.length();
+                    // Check every wall for intersection
+                    var closestWall = null;
+                    for (var k = 0; k < this.walls.length; k++) {
+                        var checkWall = this.walls[k];
+                        if (wall != checkWall) {
+                            if (checkWall.intersectsWith(ray)) {
+                                // If checkWall intersects with our ray we have to check it's intersection point's distance
+                                // If the distance is smaller than the current minimum set intersectionPoint as the closest
+                                // point and save the distance.
+                                var intersectionPoint = checkWall.intersectionPoint(ray);
+                                var tempRay = new Wall(new Point(mouseX, mouseY), new Point(intersectionPoint.x, intersectionPoint.y));
+                                if (tempRay.length() < minDistance) {
+                                    closestPoint = intersectionPoint;
+                                    closestPoint.parent = checkWall;
+                                    minDistance = tempRay.length();
+                                    closestWall = checkWall;
+                                }
+                            }
+                        }
+                    }
+                    if (this.outerWalls.indexOf(closestWall) !== -1) {
+                        return false;
+                    }
+                    this.hitpoints.push(closestPoint);
+                }
+            }
+            return [...this.hitpoints];
+        }
+
+        function Wall(p1, p2) {
+            this.p1 = p1;
+            this.position = null;
+            this.p2 = p2;
+            this.p1.parent = this;
+            this.p2.parent = this;
+            this.points = [p1, p2];
+
+            this.length = function () {
+                return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+            }
+
+            this.direction = function () {
+                var vLength = this.length();
+                return new Point((p2.x - p1.x) / vLength, (p2.y - p1.y) / vLength);
+            }
+
+            this.intersectsWith = function (wall) {
+                var a = this.p1;
+                var b = this.p2;
+                var c = wall.p1;
+                var d = wall.p2;
+                var cmp = new Point(c.x - a.x, c.y - a.y);
+                var r = new Point(b.x - a.x, b.y - a.y);
+                var s = new Point(d.x - c.x, d.y - c.y);
+
+                var cmpxr = cmp.x * r.y - cmp.y * r.x;
+                var cmpxs = cmp.x * s.y - cmp.y * s.x;
+                var rxs = r.x * s.y - r.y * s.x;
+                if (cmpxr == 0)
+                    return ((c.x - a.x < 0) != (c.x - b.x < 0))
+                        || ((c.y - a.y < 0) != (c.y - b.y < 0));
+                if (rxs == 0)
+                    return false;
+
+                var rxsr = 1 / rxs;
+                var t = cmpxs * rxsr;
+                var u = cmpxr * rxsr;
+                return (t >= 0) && (t <= 1) && (u >= 0) && (u <= 1);
+            }
+
+            this.intersectionPoint = function (wall) {
+                var a = this.p1;
+                var b = this.p2;
+                var c = wall.p1;
+                var d = wall.p2;
+
+                var divider = ((a.x - b.x) * (c.y - d.y) - (a.y - b.y) * (c.x - d.x));
+                if (divider == 0)
+                    return new Point(0, 0);
+                var intersectionX = ((a.x * b.y - a.y * b.x) * (c.x - d.x) - (a.x - b.x) * (c.x * d.y - c.y * d.x)) / divider;
+                var intersectionY = ((a.x * b.y - a.y * b.x) * (c.y - d.y) - (a.y - b.y) * (c.x * d.y - c.y * d.x)) / divider;
+
+                return new Point(intersectionX, intersectionY);
+            }
+        }
+
+        function Point(x, y) {
+            this.x = x;
+            this.y = y;
+            this.parent = null;
+        }
+
+        function Actor(ops) {
+            ops = ops || {};
+            var { x = 0, y = 0, thrust = MAX_THRUST, friction = MAX_FRICTION } = ops;
+            this.delta = .1;
+            this.track = null;
+            this.x = x;
+            this.direction = false;
+            this.currentDirection = LEFT;
+            this.y = y;
+            this.friction = friction;
+            this.speed = {
+                x: 0,
+                y: 0
+            };
+            this.passedTargets = [];
+            this.stayedTooLong = 0;
+            this.targetsPassed = 0;
+            this.thrust = thrust;
+
+            this.states = this.initState();
+        }
+
+        Actor.prototype = {
+            forward: function () {
+                if (this.dead) return;
+                var me = this;
+                // in forward pass the agent simply behaves in the environment
+                // create input to brain
+                var input_array = [LEFT, RIGHT, UP, DOWN].map(t => t === me.currentDirection ? 1 : 0);//new Array(this.num_states);
+                var dist = trackWidth / 2;
+                if (this.track.direction) {
+                    switch (this.track.direction) {
+                        case LEFT:
+                        case RIGHT:
+                            var topWallPt = this.track.topWall.points[0];
+                            dist = Math.abs(this.y - topWallPt.y) / trackWidth;
+                            break;
+                        case UP:
+                        case DOWN:
+                            var topWallPt = this.track.leftWall.points[0];
+                            dist = Math.abs(this.y - topWallPt.x) / trackWidth;
+                            break;
+                    }
+                }
+                input_array.push(dist);
+                input_array.push(this.speed.x)
+                input_array.push(this.speed.y)
+                // for (var i = 0; i < num_eyes; i++) {
+                //     var offset = 0;
+                //     var e = this.eyes[i];
+                //     input_array.push(e); // velocity information of the sensed target
+                // }
+
+                var wi = this.track.walls.filter(x => !x.boundary).map(t => {
+                    return t && t.gate && t.open ? 1 : 0;
+                });
+                if (this.tracks) {
+                    this.tracks.map(track => {
+                        if (track) {
+                            wi = [...wi, ...track.walls.filter(x => !x.boundary).map(t => {
+                                return t && t.gate && t.open ? 1 : 0;
+                            })];
+                        }
+                        else {
+                            wi = [...wi, 0, 0, 0, 0];
+                        }
+                    })
+
+                }
+                input_array.push(...wi);
+                // // proprioception and orientation
+                // input_array[ne + 0] = this.v.x;
+                // input_array[ne + 1] = this.v.y;
+
+                // input_array.push(this.velocity.x);
+                // input_array.push(this.velocity.y);
+                // input_array.push(this.velocity.z);
+
+                // input_array.push(this.direction.x);
+                // input_array.push(this.direction.y);
+                // input_array.push(this.direction.z);
+
+                this.action = this.brain.act(input_array);
+                //var action = this.actions[actionix];
+                // demultiplex into behavior variables
+                //this.action = action;
+            },
+            score: function () {
+                return this.targetsPassed + this.stayedTooLong;
+            },
+            remove: function () {
+
+            },
+            backward: function () {
+                if (this.dead) return;
+
+                var reward = this.digestion_signal;
+
+                // var proximity_reward = 0.0;
+                // var num_eyes = this.eyes.length;
+                // for(var i=0;i<num_eyes;i++) {
+                //   var e = this.eyes[i];
+                //   // agents dont like to see walls, especially up close
+                //   proximity_reward += e.sensed_type === 0 ? e.sensed_proximity/e.max_range : 1.0;
+                // }
+                // proximity_reward = proximity_reward/num_eyes;
+                // reward += proximity_reward;
+
+                //var forward_reward = 0.0;
+                //if(this.actionix === 0) forward_reward = 1;
+
+                this.last_reward = reward; // for vis
+                this.brain.learn(reward);
+            }
+        }
+        Actor.prototype.initState = function () {
+            var me = this;
+            return [...[LEFT, RIGHT, UP, DOWN].map(t => t === me.currentDirection ? 1 : 0), .5, 0, 0, ...(new Array(4 * VISION_DISTANCE)).map(x => 0)]
+        }
+        Actor.prototype.getMaxNumActions = function () {
+            return 3;
+        }
+        Actor.prototype.getNumStates = function () {
+            return this.states.length;
+        }
+        Actor.prototype.TurnLeft = function () {
+            this.direction = 1;
+        }
+        Actor.prototype.Straight = function () {
+            this.direction = 0;
+        }
+        Actor.prototype.TurnRight = function () {
+            this.direction = -1;
+        }
+        Actor.prototype.applyAction = function () {
+            switch (this.action) {
+                case 2:
+                    this.Straight();
+                    break;
+                case 1:
+                    this.TurnLeft();
+                    break;
+                case 0:
+                    this.TurnRight();
+                    break;
+            }
+        }
+        Actor.prototype.onTrack = function () {
+            return !!this.track;;
+        }
+        Actor.prototype.trackLevel = function () {
+            if (this.track) {
+                return this.track.level;
+            }
+            return null;
+        }
+        Actor.prototype.updateDirection = function () {
+            switch (this.direction) {
+                case 1:
+                    switch (this.currentDirection) {
+                        case LEFT:
+                            this.currentDirection = DOWN;
+                            break;
+                        case RIGHT:
+                            this.currentDirection = UP;
+                            break;
+                        case UP:
+                            this.currentDirection = LEFT;
+                            break;
+                        case DOWN:
+                            this.currentDirection = RIGHT;
+                            break;
+                    }
+                    break;
+                case -1:
+                    switch (this.currentDirection) {
+                        case LEFT:
+                            this.currentDirection = UP;
+                            break;
+                        case RIGHT:
+                            this.currentDirection = DOWN;
+                            break;
+                        case UP:
+                            this.currentDirection = RIGHT;
+                            break;
+                        case DOWN:
+                            this.currentDirection = LEFT;
+                            break;
+                    }
+                    break;
+            }
+        }
+        Actor.prototype.update = function (tracks) {
+            if (this.dead) {
+                return;
+            }
+
+            this.updateDirection();
+
+            // var thrustX = this.direction ? this.thrust : 0;
+            // var thrustY = this.direction ? 0 : this.thrust;
+            var thrustX = 0;
+            var thrustY = 0;
+            switch (this.currentDirection) {
+                case LEFT:
+                    thrustX = this.thrust;
+                    break;
+                case RIGHT:
+                    thrustX = -this.thrust;
+                    break;
+                case UP:
+                    thrustY = -this.thrust;
+                    break;
+                case DOWN:
+                    thrustY = this.thrust;
+                    break;
+            }
+
+            this.speed.x += (-this.friction * this.speed.x) + thrustX;
+            this.speed.y += (-this.friction * this.speed.y) + thrustY;
+
+
+            this.x += this.speed.x;
+            this.y += this.speed.y;
+            var me = this;
+            var trackIndex = this.trackIndex;
+            if (!this.track || !this.track.isInside(me)) {
+                this.track = (this.track ? me.tracks : tracks).find((track, index) => {
+                    var ok = false;
+                    if (me.track && me.track.transitionLevel && track.level === me.track.level + 1) {
+                        ok = true;
+                    }
+                    else if (me.track && !me.track.transitionLevel && track.level === me.track.level) {
+                        ok = true;
+                    }
+                    if (!me.track || me.track === track) {
+                        ok = true;
+                    }
+                    if (ok) {
+                        var isIn = track.isInside(me);
+                        if (isIn)
+                            trackIndex = index;
+                        return isIn;
+                    }
+                    return false;
+                });
+            }
+            this.trackIndex = trackIndex;
+            me.tracks = [];
+            for (var i = 0; i < VISION_DISTANCE; i++) {
+                me.tracks.push(tracks[i + trackIndex]);
+            }
+
+            if (!this.track) {
+                this.dead = true;
+            }
+            else if (this.stayedTooLong < -1) {
+                this.dead = true;
+            }
+            else {
+                var targetWall = this.track.walls.find(x => x.open && x.gate);
+                this.digestion_signal = 0;
+
+
+                if (this.lastTrack && this.lastTrack !== this.track) {
+                    this.digestion_signal = 1;
+                    if (this.passedTargets.indexOf(this.track) === -1) {
+                        this.passedTargets.push(this.track);
+                        this.targetsPassed += 1;
+                        this.stayedTooLong = 0;
+                    }
+                }
+                else {
+                    this.stayedTooLong += -.01;
+                }
+
+                this.lastTrack = this.track;
+            }
+        }
+
+        function InputManager(game) {
+            this.game = game;
+            this.hoverOver = false;
+            this.mouseX = 0;
+            this.mouseY = 0;
+        }
+
+        InputManager.prototype.init = function () {
+            // this.game.canvas.addEventListener("mousemove", this.onMouseMove.bind(this), false);
+            // this.game.canvas.addEventListener("mouseover", this.onMouseOver.bind(this), false);
+            // this.game.canvas.addEventListener("mouseout", this.onMouseOut.bind(this), false);
+        }
+
+        InputManager.prototype.onMouseMove = function (e) {
+            var rect = this.game.canvas.getBoundingClientRect();
+            this.mouseX = e.clientX - rect.left;
+            this.mouseY = e.clientY - rect.top;
+        }
+
+        InputManager.prototype.onMouseOver = function (e) {
+            this.hoverOver = true;
+        }
+
+        InputManager.prototype.onMouseOut = function (e) {
+            this.hoverOver = false;
+        }
+
+        function startRl() {
+            var total_number_of_agents = AGENT_COUNT;
+            var rlService = rl({
+                agents: ([...new Array(total_number_of_agents)]).map((t, i) => {
+                    var agent = new Actor({ x: trackWidth / 2, y: trackWidth / 2 });
+                    if (best_brains && best_brains[i]) {
+                        agent.brainConfig = best_brains[i];
+                    }
+                    // agent.world(world);
+                    // agent.body(agent_vehicle);
+                    // addVehicleVisuals(demo, agent_vehicle);
+                    // agent_vehicle.addToWorld(world);
+                    // agent.init();
+                    agent.applyAction();
+                    current_agents.push(agent);
+                    return agent;
+                }),
+                createTrack: function () {
+                },
+                createItem: function (item) {
+                }
+            });
+            var world = rlService.start();
+            rlService.agents = world.agents;
+            return rlService;
+        }
+    </script>
+</body>
+
+</html>

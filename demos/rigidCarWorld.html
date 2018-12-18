@@ -34,14 +34,46 @@
         var mass = 2;
         var vehicle;
 
+        var maxSteerVal = Math.PI / 8;
+        var maxSpeed = 10;
+        var maxForce = 600;
+        var best_brains = [];
+        var current_agents = [];
+        try {
+            var b = localStorage.getItem('RCW');
+            best_brains = JSON.parse(b);
+        } catch (e) {
+            console.log('no brains');
+        }
+        var RCW = {
+            generation: 0
+        }
         demo.addScene("car", function () {
             var world = demo.getWorld();
             world.gravity.set(0, 0, -30);
             world.broadphase = new CANNON.SAPBroadphase(world);
             world.defaultContactMaterial.friction = 0.2;
-
-
+            demo.setRenderMode('wireframe')
+            world.scene = demo.scene;
             var materials = createGroundContactMaterial();
+            function createCircle(color, radius, center_xpos, center_ypos) {
+                var material = new THREE.LineBasicMaterial({
+                    color
+                });
+                var segments = 100;
+                var geometry = new THREE.Geometry();
+                for (var i = 0; i < segments; i++) {
+                    geometry.vertices.push(
+                        new THREE.Vector3(radius * Math.cos(i / segments * Math.PI * 2) + center_xpos, radius * Math.sin(i / segments * Math.PI * 2) + center_ypos, 10)
+                    )
+                }
+
+                var line = new THREE.Line(geometry, material);
+                demo.scene.add(line);
+
+                return [...geometry.vertices];
+            }
+
             var {
                 itemVehicleContactMaterial,
                 vehicleMaterial,
@@ -56,47 +88,132 @@
             // We must add the contact materials to the world
             world.addContactMaterial(wheelGroundContactMaterial);
 
-            var vehicle = createVehicle({ wheelMaterial, vehicleMaterial });
+            var vehicle_ = createVehicle({ wheelMaterial, vehicleMaterial });
 
 
             // Constrain wheels
             var constraints = [];
 
-            // addVehicleVisuals(demo, vehicle);
-            // vehicle.addToWorld(world);
+            addVehicleVisuals(demo, vehicle_);
+            vehicle_.addToWorld(world);
 
             var hfBody = addGround(groundMaterial);
 
             world.addBody(hfBody);
             demo.addVisual(hfBody);
-            var AgentCls = createAgent();
+            var AgentCls = createAgent({ range: 250 });
 
+            var center_xpos = 200;
+            var center_ypos = 500;
+            let radius = 250;
+            let absolute_boundary_radius = 500;
+            var total_number_of_agents = 10;
             var rlService = rl({
-                agents: ([...new Array(3)]).map((t, i) => {
-                    var agent_vehicle = createVehicle({ wheelMaterial, vehicleMaterial });
+                world,
+                agents: ([...new Array(total_number_of_agents)]).map((t, i) => {
+                    var _pos = new THREE.Vector3(
+                        Math.random() * radius * Math.cos(i / total_number_of_agents * Math.PI * 2) + center_xpos,
+                        50 * Math.sin(i / total_number_of_agents * Math.PI * 2) + center_ypos,
+                        0);
+                    var agent_vehicle = createVehicle({ position: _pos, wheelMaterial, vehicleMaterial });
+
                     var agent = new AgentCls({
                         radius: 100,
                         numberOfEyes: 6,
-                        initPosition: new THREE.Vector3(0, (i + 1) * 100, 100)
+                        initPosition: _pos
                     });
-
+                    if (best_brains && best_brains[i]) {
+                        agent.brainConfig = best_brains[i];
+                    }
+                    agent.world(world);
                     agent.body(agent_vehicle);
                     addVehicleVisuals(demo, agent_vehicle);
                     agent_vehicle.addToWorld(world);
                     agent.init();
-
+                    agent.applyAction();
+                    current_agents.push(agent);
                     return agent;
-                })
+                }),
+                boundary: {
+                    center: {
+                        x: center_xpos,
+                        y: center_ypos,
+                        radius: absolute_boundary_radius
+                    }
+                },
+                trackWidth: 20,
+                createTrack: function () {
+                    var material = new THREE.LineBasicMaterial({
+                        color: 0x0000ff
+                    });
+                    var segments = 100;
+                    var geometry = new THREE.Geometry();
+                    for (var i = 0; i < segments; i++) {
+                        geometry.vertices.push(
+                            new THREE.Vector3(radius * Math.cos(i / segments * Math.PI * 2) + center_xpos, radius * Math.sin(i / segments * Math.PI * 2) + center_ypos, 10)
+                        )
+                    }
+
+                    var line = new THREE.Line(geometry, material);
+                    demo.scene.add(line);
+                    createCircle(0xff0000, absolute_boundary_radius, center_xpos, center_ypos)
+                    return [...geometry.vertices];
+                },
+                createItem: function (item) {
+                    item = item || {}
+
+                    item.world(world);
+                    var {
+                        mass = 1,
+                        size = 2,
+                        position = new THREE.Vector3(0, 0, 0)
+                    } = item;
+
+                    var body = new CANNON.Body({ mass: mass });
+
+                    var he = new CANNON.Vec3(size, size, size);
+                    var shape = new CANNON.Box(he);
+                    body.addShape(shape);
+                    body.position.set(item.position.x, item.position.y, item.position.z);
+
+                    world.addBody(body);
+                    demo.addVisual(body);
+                    item.body(body);
+                }
             });
-            console.log(rlService);
-            rlService.start();
-            console.log(world.collisionMatrix);
-            console.log(vehicle);
-            window.vehicle = vehicle;
+            var vworld = rlService.start();
+
+            window.vehicle_ = vehicle_;
             window.world = world;
             window.animateFunc = animateFunc;
-            console.log(animateFunc);
-            rlService.tick();
+            var cantick = false;
+            setTimeout(() => {
+                cantick = true;
+            }, 5000)
+            function animate() {
+                if (vworld && vworld.agents.length === 0) {
+                    console.log('test over');
+                    var best_agents = current_agents.sort((a, b) => {
+                        return b.score() - a.score();
+                    }).slice(0, 5);
+
+                    best_brains = best_agents.map(t => t.brain.toJSON());
+                    console.log(current_agents.slice(0, 5).map(t => t.score()));
+                    RCW.generation++;
+                    console.log(`Generation ${RCW.generation}`);
+                    localStorage.setItem('RCW', JSON.stringify(best_brains));
+                    current_agents = [];
+                    demo.start();
+                }
+                else {
+                    requestAnimationFrame(animate);
+                    animateFunc();
+                    if (cantick) {
+                        rlService.tick();
+                    }
+                }
+            }
+            animate();
         });
 
 
@@ -105,9 +222,6 @@
         document.onkeydown = handler;
         document.onkeyup = handler;
 
-        var maxSteerVal = Math.PI / 8;
-        var maxSpeed = 10;
-        var maxForce = 600;
         function handler(event) {
             var up = (event.type == 'keyup');
 
@@ -117,23 +231,23 @@
             switch (event.keyCode) {
 
                 case 38: // forward
-                    vehicle.setWheelForce(up ? 0 : maxForce, 2);
-                    vehicle.setWheelForce(up ? 0 : -maxForce, 3);
+                    vehicle_.setWheelForce(up ? 0 : maxForce, 2);
+                    vehicle_.setWheelForce(up ? 0 : -maxForce, 3);
                     break;
 
                 case 40: // backward
-                    vehicle.setWheelForce(up ? 0 : -maxForce / 2, 2);
-                    vehicle.setWheelForce(up ? 0 : maxForce / 2, 3);
+                    vehicle_.setWheelForce(up ? 0 : -maxForce / 2, 2);
+                    vehicle_.setWheelForce(up ? 0 : maxForce / 2, 3);
                     break;
 
                 case 39: // right
-                    vehicle.setSteeringValue(up ? 0 : -maxSteerVal, 0);
-                    vehicle.setSteeringValue(up ? 0 : -maxSteerVal, 1);
+                    vehicle_.setSteeringValue(up ? 0 : -maxSteerVal, 0);
+                    vehicle_.setSteeringValue(up ? 0 : -maxSteerVal, 1);
                     break;
 
                 case 37: // left
-                    vehicle.setSteeringValue(up ? 0 : maxSteerVal, 0);
-                    vehicle.setSteeringValue(up ? 0 : maxSteerVal, 1);
+                    vehicle_.setSteeringValue(up ? 0 : maxSteerVal, 0);
+                    vehicle_.setSteeringValue(up ? 0 : maxSteerVal, 1);
                     break;
 
             }

@@ -173,7 +173,7 @@ CANNON.Demo = function (options) {
     }
 
     var light, scene, ambient, stats, info;
-
+    that.setRenderMode = setRenderMode;
     function setRenderMode(mode) {
         if (renderModes.indexOf(mode) === -1) {
             throw new Error("Render mode " + mode + " not found!");
