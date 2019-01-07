@@ -542,45 +542,6 @@ World.prototype = {
         var absolute_minimum_agent_speed = this.absolute_minimum_agent_speed;
         // fix input to all agents based on environment
         // process eyes
-        for (var i = 0, n = this.agents.length; i < n; i++) {
-            var a = this.agents[i];
-            // for (var ei = 0, ne = a.eyes.length; ei < ne; ei++) {
-            //     var e = a.eyes[ei];
-            //     // we have a line from p to p->eyep
-            //     var res = this.see(a, e);
-            //     if (res) {
-            //         // eye collided with wall
-            //         var eye_position = a.position.clone().vadd(e.position());
-            //         if (res.type !== BOUNDARY) {
-            //             e.sensed_proximity = res.position.distanceTo(eye_position) / e.max_range;
-            //             e.sensed_direction = res.position.sub ? res.position.sub(eye_position).normalize() : res.position.vsub(eye_position).unit();
-            //         }
-            //         else {
-            //             e.sensed_direction = this.directionToBoundary(eye_position);
-            //             e.sensed_proximity = this.calculateDistanceToBoundary(eye_position) / e.max_range;
-            //         }
-            //         e.sensed_type = res.type;
-            //         if ('velocity' in res) {
-            //             e.velocity = res.velocity;
-            //         } else {
-            //             e.velocity = new THREE.Vector3(0, 0, 0);
-            //         }
-            //     } else {
-            //         e.sensed_proximity = e.max_range;
-            //         e.sensed_type = -1;
-            //         e.velocity = new THREE.Vector3(0, 0, 0);
-            //     }
-            // }
-            // var sorted = track.sort((p, b) => {
-            //     return a.position.distanceTo(p) - a.position.distanceTo(b);
-            // });
-            // var _ = sorted[0].distanceTo(a.position);
-            // a.distanceToTrack = _;
-            // if (this.boundary) {
-            //     a.distanceToBoundary = this.calculateDistanceToBoundary(a.position);
-            //     a.outsideBoundary = this.isOutSideBoundary(a.position);
-            // }
-        }
 
         // let the agents behave in the world based on their input
         for (var i = 0, n = this.agents.length; i < n; i++) {
@@ -595,40 +556,6 @@ World.prototype = {
 
             // execute agent's desired action
             a.applyAction();
-            // var speed = 1;
-            // if (a.action === 0) {
-            //     a.v.x += -speed;
-            // }
-            // if (a.action === 1) {
-            //     a.v.x += speed;
-            // }
-            // if (a.action === 2) {
-            //     a.v.y += -speed;
-            // }
-            // if (a.action === 3) {
-            //     a.v.y += speed;
-            // }
-
-            // forward the agent by velocity
-            // a.v.x *= 0.95; a.v.y *= 0.95;
-            // a.p.x += a.v.x; a.p.y += a.v.y;
-
-            // agent is trying to move from p to op. Check walls
-            //var res = this.stuff_collide_(a.op, a.p, true, false);
-            //if(res) {
-            // wall collision...
-            //}
-
-            // handle boundary conditions.. bounce agent
-            // if (a.p.x < 1) { a.p.x = 1; a.v.x = 0; a.v.y = 0; }
-            // if (a.p.x > this.W - 1) { a.p.x = this.W - 1; a.v.x = 0; a.v.y = 0; }
-            // if (a.p.y < 1) { a.p.y = 1; a.v.x = 0; a.v.y = 0; }
-            // if (a.p.y > this.H - 1) { a.p.y = this.H - 1; a.v.x = 0; a.v.y = 0; }
-
-            // if(a.p.x<0) { a.p.x= this.W -1; };
-            // if(a.p.x>this.W) { a.p.x= 1; }
-            // if(a.p.y<0) { a.p.y= this.H -1; };
-            // if(a.p.y>this.H) { a.p.y= 1; };
         }
 
         // tick all items
@@ -662,82 +589,14 @@ World.prototype = {
         for (var j = 0, m = this.agents.length; j < m; j++) {
             var ag = this.agents[j];
 
-            // var speed = a.velocity.length();
-            // a.digestion_signal += speed;
-
 
             if (!ag.onTrack()) {
                 ag.digestion_signal += -1;
                 update_agents = true;
                 ag.dead = true;
             }
-
-
-            // if (ag.distanceToTrack > this.trackWidth) {
-            //     ag.digestion_signal += -1;
-            // }
-            // else {
-            //     ag.digestion_signal += .2;
-            // }
-            // if (ag.collided) {
-            //     if (registration[ag.collisionEvent.target.index] !== registration[ag.collisionEvent.body.index]) {
-            //         var hitType = whatTypeIsIndex(ag.collisionEvent.target.index);
-            //         if (whatTypeIsIndex(ag.collisionEvent.body.index) !== false)
-            //             switch (hitType) {
-            //                 case REWARD:
-            //                     ag.digestion_signal += 1.0; // mmm delicious apple
-            //                     ag.rewards++;
-            //                     break;
-            //                 case OBSTACLE:
-            //                     ag.digestion_signal += -1.0; // mmm delicious apple
-            //                     ag.obstacles++;
-            //                     ag.dead = true;
-            //                     break;
-            //                 case AGENT_TYPE:
-            //                     ag.digestion_signal += -1.0; // mmm delicious apple
-            //                     ag.agents++;
-            //                     ag.dead = true;
-            //                     update_agents = true;
-            //                     break;
-
-            //             }
-            //     }
-            //     ag.collided = false;
-            // }
         }
-        // for (var i = 0, n = this.items.length; i < n; i++) {
-        //     var it = this.items[i];
-        //     it.age += 1;
 
-        //     // see if some agent gets lunch
-        //     for (var j = 0, m = this.agents.length; j < m; j++) {
-        //         var a = this.agents[j];
-        //         var d = this.cannonWorld.collisionMatrix.get(a.getCollisionIndex(), (it.getCollisionIndex()));
-        //         if (d) {
-        //             debugger
-        //             // wait lets just make sure that this isn't through a wall
-        //             //var rescheck = this.stuff_collide_(a.p, it.p, true, false);
-        //             var rescheck = false;
-        //             if (!rescheck) {
-        //                 // ding! nom nom nom
-        //                 if (it.type === REWARD) {
-        //                     a.digestion_signal += 1.0; // mmm delicious apple
-        //                     a.rewards++;
-        //                 }
-        //                 if (it.type === OBSTACLE) {
-        //                     a.digestion_signal += -1.0; // ewww obstacles
-        //                     a.obstacles++;
-        //                 }
-        //                 it.cleanup_ = true;
-        //                 update_items = true;
-        //                 break; // break out of loop, item was consumed
-        //             }
-        //         }
-        //     }
-
-        //     // // move the items
-
-        // }
         if (update_items && this.items) {
             var nt = [];
 

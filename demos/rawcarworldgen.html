@@ -34,29 +34,39 @@
         var context = null;
         var canvasWidth = 800;
         var canvasHeight = 600;
-        var MAX_THRUST = .09;
-        var MAX_BONUS_THRUST = .07;
-        var MAX_AVOIDENCE_THRUST = MAX_THRUST / 3;
-        var MAX_FRICTION = .035;
+        var MAX_THRUST = .39;
+
+        var MAX_BONUS_THRUST = .57;
+        var MAX_AVOIDENCE_THRUST = .60;
+        var MAX_FRICTION = .095;
         var AGENT_COUNT = 20;
+        var MAX_KEEP = 10;
         var VISION_DISTANCE = 2;
         var MAX_DISTANCE_OF_EFFECT = 15;
         var trackWidth = 200;
-        var TRACK_COUNT = 400;
+        var TRACK_COUNT = 20;
+        var COMPLETE = false;
         const THINK_RATE = 17;
+        const RECORDINGS = [];
+        var recordings = {
+
+        }
         const TrackCollections = {
         };
         let AGENTS_ORDERED = [];
-        window.rememberTrack = true;
+        window.rememberTrack = false;
         const LEFT = 'LEFT';
         const RIGHT = 'RIGHT';
         const UP = 'UP';
         const DOWN = 'DOWN';
         var best_brains = [];
+        var settings = [];
         var current_agents = [];
         try {
             var b = localStorage.getItem('DWD');
+            var s = localStorage.getItem('RCW');
             best_brains = JSON.parse(b);
+            settings = JSON.parse(s);
         } catch (e) {
             console.log('no brains');
         }
@@ -173,6 +183,8 @@
                 game.tracks.push(track);
                 game.walls.push(...track.walls);
             }
+            recordings.track = game.tracks.map(track => track.toJson());
+            recordings.actors = {};
 
             if (window.rememberTrack)
                 window.trackTurns = trackTurns;
@@ -192,12 +204,19 @@
                     return b.score() - a.score();
                 });
                 // best_agents.map(t => console.log(t.score()));
-
+                COMPLETE = false;
                 best_brains = best_agents.map(t => t.brain.toJSON());
+                settings = best_agents.map(t => t.settings());
                 console.log(current_agents.map(t => t.score()));
                 DWD.generation++;
+                RECORDINGS.unshift(recordings);
+                if (RECORDINGS.length > 11) {
+                    RECORDINGS.pop();
+                }
+                recordings = {};
                 console.log(`Generation ${DWD.generation}`);
-                localStorage.setItem('DWD', JSON.stringify(best_brains.slice(0, 2)));
+                localStorage.setItem('DWD', JSON.stringify(best_brains.slice(0, 5)));
+                localStorage.setItem('RCW', JSON.stringify(settings.slice(0, 5)));
                 current_agents = [];
                 MasterStart();
             }
@@ -222,19 +241,45 @@
             this.actors.filter(x => !x.dead).map(actor => {
                 actor.update(tracks);
             });
-            this.notDone = this.actors.find(x => !x.dead)
-            var outputs = document.getElementById('output');
-            var doc = '';
-            this.actors.filter(x => !x.dead).map((t, ind) => {
-                doc += `<div>Actor ${ind} : (${t.score()})</div>`
-            })
-            AGENTS_ORDERED = this.actors.filter(x => !x.dead).sort((b, a) => {
-                if (a.trackIndex === b.trackIndex) {
-                    return a.lastDistance - b.lastDistance;
-                }
-                return a.trackIndex - b.trackIndex;
-            });
-            outputs.innerHTML = doc;
+            this.notDone = this.actors.find(x => !x.dead);
+            if (COMPLETE) {
+                this.notDone = !COMPLETE;
+            }
+            if (!window.skipRender) {
+                var outputs = document.getElementById('output');
+                var doc = '';
+                var recs = '';
+                RECORDINGS.map((record, ri) => {
+                    recs += '<div><a id="record' + ri + '">record ' + ri + '</a></div>'
+                })
+                this.actors.filter(x => !x.dead).map((t, ind) => {
+                    doc += `<div>Actor ${ind} : (${t.score()})</div>`
+                })
+                AGENTS_ORDERED = this.actors.filter(x => !x.dead).sort((b, a) => {
+                    if (a.trackIndex === b.trackIndex) {
+                        return a.lastDistance - b.lastDistance;
+                    }
+                    return a.trackIndex - b.trackIndex;
+                });
+                outputs.innerHTML = `<table><tr><td>${doc}</td><td>${recs}</td></tr></table>`;
+                const copyToClipboard = str => {
+                    const el = document.createElement('textarea');
+                    el.value = str;
+                    document.body.appendChild(el);
+                    el.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(el);
+                };
+                RECORDINGS.map((record, ri) => {
+                    var d = document.getElementById('record' + ri);
+                    if (d) {
+                        d.addEventListener('click', function () {
+                            console.log(`clicked ${ri}`)
+                            copyToClipboard(JSON.stringify(record));
+                        })
+                    }
+                })
+            }
         }
 
         Game.prototype.render = function () {
@@ -388,6 +433,15 @@
             });
 
         }
+        Track.prototype.toJson = function () {
+            return {
+                level: this.level,
+                transitionLevel: this.transitionLevel,
+                wall: this.walls.map(wall => wall.toJson()),
+                center: this._center,
+                direction: this.direction,
+            }
+        }
         Track.prototype.center = function () {
             return { ...this._center };
         }
@@ -438,7 +492,7 @@
         function Wall(p1, p2) {
             this.p1 = p1;
             this.position = null;
-            this.p2 = p2;
+            this.p2 = new Point(p2.x, p2.y);
             this.p1.parent = this;
             this.p2.parent = this;
             this.points = [p1, p2];
@@ -450,6 +504,12 @@
             this.direction = function () {
                 var vLength = this.length();
                 return new Point((p2.x - p1.x) / vLength, (p2.y - p1.y) / vLength);
+            }
+            this.toJson = function () {
+                return {
+                    p1: p1.toJson(),
+                    p2: p2.toJson()
+                }
             }
 
             this.intersectsWith = function (wall) {
@@ -496,6 +556,12 @@
             this.x = x;
             this.y = y;
             this.parent = null;
+        }
+        Point.prototype.toJson = function () {
+            return {
+                x: this.x,
+                y: this.y
+            }
         }
         Point.prototype.add = function (point) {
             return new Point(this.x + point.x, this.y + point.y);
@@ -580,6 +646,28 @@
         }
 
         Actor.prototype = {
+            toJson: function toJson() {
+                var lastPosition = this.lastPosition;
+                var direction = this._direction ? this._direction.unit() : new Point(1, 0);
+                if (lastPosition) {
+                    direction = this.lastPosition.sub(new Point(this.x, this.y)).unit();
+                }
+                return {
+                    x: this.x,
+                    y: this.y,
+                    direction,
+                    trackIndex: this.trackIndex
+                }
+            },
+            settings: function () {
+                return [this.thrust, this.friction, this.thrustAvoidence, this.bonusThrust]
+            },
+            set: function (settings) {
+                this.thrust = settings[0] || MAX_THRUST;
+                this.friction = settings[1] || MAX_FRICTION;
+                this.thrustAvoidence = settings[2] || MAX_AVOIDENCE_THRUST;
+                this.bonusThrust = settings[3] || MAX_BONUS_THRUST;
+            },
             rotateVector: function (angle) {
                 var x = Math.cos(-(Math.PI / 2) + angle);
                 var y = Math.sin(-(Math.PI / 2) + angle);
@@ -825,7 +913,12 @@
             if (this.dead) {
                 return;
             }
-
+            if (!this.lastPosition || (this.lastPosition.x !== this.x && this.lastPosition.y !== this.y)) {
+                if (this.lastPosition) {
+                    this._direction = this.lastPosition.sub(new Point(this.x, this.y)).unit();
+                }
+                this.lastPosition = new Point(this.x, this.y);
+            }
             this.updateDirection();
             var avoidVector = this.getAvoidenceVector();
             // var thrustX = this.direction ? this.thrust : 0;
@@ -863,7 +956,8 @@
             this.speed.x += (-this.friction * this.speed.x) + thrustX + bThrust.x;
             this.speed.y += (-this.friction * this.speed.y) + thrustY + bThrust.y;
 
-
+            recordings.actors[this.id] = recordings.actors[this.id] || [];
+            recordings.actors[this.id].push(this.toJson());
             this.x += this.speed.x;
             this.y += this.speed.y;
             var me = this;
@@ -896,7 +990,9 @@
             for (var i = 0; i < VISION_DISTANCE; i++) {
                 me.tracks.push(tracks[i + trackIndex]);
             }
-
+            if (trackIndex === tracks.length - 1) {
+                COMPLETE = true;
+            }
             if (!this.track) {
                 //this.dead = true;
                 // this.digestion_signal = -1;
@@ -945,12 +1041,13 @@
                             this.digestion_signal = -11.9;
                         }
                         this.lastDistance = currentDistance;
-                        this.stayedTooLong += -.0005;
+                        this.stayedTooLong += -.001;
                     }
                 }
 
                 if (this.track)
                     this.lastTrack = this.track;
+
             }
         }
         function distance(p2, p1) {
@@ -987,9 +1084,32 @@
             var total_number_of_agents = AGENT_COUNT;
             var rlService = rl({
                 agents: ([...new Array(total_number_of_agents)]).map((t, i) => {
-                    var agent = new Actor({ x: trackWidth / 2, y: trackWidth / 2 });
+                    var agent = new Actor({
+                        x: trackWidth / 2,
+                        y: trackWidth / 2
+                    });
                     if (best_brains && best_brains[i % total_number_of_agents]) {
                         agent.brainConfig = best_brains[i];
+                    }
+                    if (settings && settings[i % total_number_of_agents]) {
+                        if (i < MAX_KEEP) {
+                            agent.set(settings[i % total_number_of_agents]);
+                        }
+                        else {
+                            var set1 = settings[Math.floor(Math.random() * settings.length)];
+                            var set2 = settings[Math.floor(Math.random() * settings.length)];
+                            agent.set(set1.map((t, i) => {
+                                if (Math.random() > .5) {
+                                    return t;
+                                }
+                                return set2[i];
+                            }));
+                        }
+                    }
+                    else {
+                        agent.set([MAX_THRUST, MAX_FRICTION, MAX_AVOIDENCE_THRUST, MAX_BONUS_THRUST].map(x => {
+                            return x * Math.random();
+                        }))
                     }
                     // agent.world(world);
                     // agent.body(agent_vehicle);
