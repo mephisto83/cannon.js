@@ -32,19 +32,21 @@
     <script>
         var canvas = null;
         var context = null;
-        var canvasWidth = 800;
-        var canvasHeight = 600;
-        var MAX_THRUST = .39;
-
+        var searchParams = new URLSearchParams(window.location.search);
+        var canvasWidth = parseFloat(searchParams.get('canvasWidth') || 800);
+        var canvasHeight = parseFloat(searchParams.get('canvasHeight') || 600);
+        var MAX_THRUST = parseFloat(searchParams.get('maxThrust') || .39);
+        var MIN_OK =  parseFloat(searchParams.get('minok') || 1);
         var MAX_BONUS_THRUST = .57;
         var MAX_AVOIDENCE_THRUST = .60;
         var MAX_FRICTION = .095;
-        var AGENT_COUNT = 20;
-        var MAX_KEEP = 10;
+        var AGENT_COUNT = parseFloat(searchParams.get('agents') || 20);
+        var MAX_KEEP = parseFloat(searchParams.get('keep') || 10);;
+        var NEW_AGENTS = parseFloat(searchParams.get('new') || 1);;
         var VISION_DISTANCE = 2;
         var MAX_DISTANCE_OF_EFFECT = 15;
         var trackWidth = 200;
-        var TRACK_COUNT = 20;
+        var TRACK_COUNT = parseFloat(searchParams.get('trackSize') || 500);
         var COMPLETE = false;
         const THINK_RATE = 17;
         const RECORDINGS = [];
@@ -203,6 +205,9 @@
                 var best_agents = current_agents.sort((a, b) => {
                     return b.score() - a.score();
                 });
+                recordings.scores = current_agents.sort((a, b) => {
+                    return b.score() - a.score();
+                }).map(t => t.score());
                 // best_agents.map(t => console.log(t.score()));
                 COMPLETE = false;
                 best_brains = best_agents.map(t => t.brain.toJSON());
@@ -210,7 +215,7 @@
                 console.log(current_agents.map(t => t.score()));
                 DWD.generation++;
                 RECORDINGS.unshift(recordings);
-                if (RECORDINGS.length > 11) {
+                if (RECORDINGS.length > 2) {
                     RECORDINGS.pop();
                 }
                 recordings = {};
@@ -242,6 +247,9 @@
                 actor.update(tracks);
             });
             this.notDone = this.actors.find(x => !x.dead);
+            if (this.actors.filter(x => !x.dead).length <= MIN_OK) {
+                COMPLETE = true;
+            }
             if (COMPLETE) {
                 this.notDone = !COMPLETE;
             }
@@ -278,7 +286,8 @@
                             copyToClipboard(JSON.stringify(record));
                         })
                     }
-                })
+                });
+                window.RECORDINGS = RECORDINGS;
             }
         }
 
@@ -936,11 +945,11 @@
             }
             switch (this.currentDirection) {
                 case LEFT:
-                    bThrust = (this.leftVector.neg()).makeLength(bonusThrust);
+                    bThrust = new Point(0, 0);// (this.leftVector.neg()).makeLength(bonusThrust);
                     // thrustX += -this.thrust / 10 * Math.random();
                     break;
                 case RIGHT:
-                    bThrust = (this.rightVector.neg().makeLength(bonusThrust));
+                    bThrust = new Point(0, 0);// (this.rightVector.neg().makeLength(bonusThrust));
                     //thrustX += this.thrust / 10 * Math.random();
                     break;
                 case UP:
@@ -1094,6 +1103,11 @@
                     if (settings && settings[i % total_number_of_agents]) {
                         if (i < MAX_KEEP) {
                             agent.set(settings[i % total_number_of_agents]);
+                        }
+                        else if (i < MAX_KEEP + NEW_AGENTS) {
+                            agent.set([MAX_THRUST, MAX_FRICTION, MAX_AVOIDENCE_THRUST, MAX_BONUS_THRUST].map(x => {
+                                return x * Math.random();
+                            }))
                         }
                         else {
                             var set1 = settings[Math.floor(Math.random() * settings.length)];
