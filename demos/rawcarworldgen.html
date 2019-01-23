@@ -35,18 +35,21 @@
         var searchParams = new URLSearchParams(window.location.search);
         var canvasWidth = parseFloat(searchParams.get('canvasWidth') || 800);
         var canvasHeight = parseFloat(searchParams.get('canvasHeight') || 600);
-        var MAX_THRUST = parseFloat(searchParams.get('maxThrust') || .39);
-        var MIN_OK =  parseFloat(searchParams.get('minok') || 1);
+        var MAX_THRUST = parseFloat(searchParams.get('maxThrust') || .5);
+        var MIN_OK = parseFloat(searchParams.get('minok') || 1);
         var MAX_BONUS_THRUST = .57;
         var MAX_AVOIDENCE_THRUST = .60;
-        var MAX_FRICTION = .095;
+        var MAX_FRICTION = parseFloat(searchParams.get('maxFriction') || .095);;
         var AGENT_COUNT = parseFloat(searchParams.get('agents') || 20);
         var MAX_KEEP = parseFloat(searchParams.get('keep') || 10);;
         var NEW_AGENTS = parseFloat(searchParams.get('new') || 1);;
         var VISION_DISTANCE = 2;
         var MAX_DISTANCE_OF_EFFECT = 15;
-        var trackWidth = 200;
-        var TRACK_COUNT = parseFloat(searchParams.get('trackSize') || 500);
+        var DEAD_DISTANCE = 2.5;
+        var DEAD_AFTER = 2;
+        var trackWidth = parseFloat(searchParams.get('trackWidth') || 300);;;
+        var NUMBER_OF_LEVEL_TRANSITIONS = 6;
+        var TRACK_COUNT = parseFloat(searchParams.get('trackSize') || 200);
         var COMPLETE = false;
         const THINK_RATE = 17;
         const RECORDINGS = [];
@@ -107,13 +110,37 @@
             this.tracks = [];
             this.trackMap = {};
         }
-        Game.prototype.addToTrackMap = function (left, top, level) {
-            if (this.trackMap[`${left}-${top}-${level}`]) {
-                this.trackMap[`${left}-${top}-${level + 1}`] = true;
+        Game.prototype.addToTrackMap = function (left, top, level, step, index) {
+            if (this.trackMap[`${left}-${top}-${level}`] //||
+                // this.trackMap[`${left}-${top + step}-${level}`] ||
+                // this.trackMap[`${left}-${top - step}-${level}`] ||
+                // this.trackMap[`${left + step}-${top}-${level}`] ||
+                // this.trackMap[`${left - step}-${top}-${level}`]
+            ) {
+                this.trackMap[`${left}-${top}-${level + 1}`] = { index };
                 return level + 1;
             }
-            this.trackMap[`${left}-${top}-${level}`] = true;
+            this.trackMap[`${left}-${top}-${level}`] = { index };
             return level;
+        }
+        Game.prototype.getOption = function (direction) {
+            let trackTurnOptions = [];
+            switch (direction) {
+                case LEFT:
+                    trackTurnOptions = [LEFT, UP, DOWN];
+                    break;
+                case RIGHT:
+                    trackTurnOptions = [RIGHT, UP, DOWN];
+                    break;
+                case UP:
+                    trackTurnOptions = [RIGHT, UP, LEFT];
+                    break;
+                case DOWN:
+                    trackTurnOptions = [RIGHT, DOWN, LEFT];
+                    break;
+            }
+
+            return trackTurnOptions;
         }
         Game.prototype.generateTrack = function (ops) {
             ops = ops || {};
@@ -128,29 +155,23 @@
             let game = this;
             var trackMap = {};
             var lastTrack = null;
+            var trackBeforeLast = null;
             var currentLevel = 0;
             var me = this;
             var trackTurns = [];
+            var samedirection = 0;
             for (var i = 0; i < trackCount; i++) {
                 var trackTurnOptions = [LEFT, RIGHT, UP, DOWN];
                 if (lastTrack) {
-                    switch (lastTrack.direction) {
-                        case LEFT:
-                            trackTurnOptions = [LEFT, UP, DOWN];
-                            break;
-                        case RIGHT:
-                            trackTurnOptions = [RIGHT, UP, DOWN];
-                            break;
-                        case UP:
-                            trackTurnOptions = [RIGHT, UP, LEFT];
-                            break;
-                        case DOWN:
-                            trackTurnOptions = [RIGHT, DOWN, LEFT];
-                            break;
+                    trackTurnOptions = this.getOption(lastTrack.direction);
+                    if (trackBeforeLast) {
+                        var trackBeforeLastOptions = this.getOption(trackBeforeLast.direction);
+                        trackTurnOptions = trackTurnOptions.filter(t => trackBeforeLastOptions.indexOf(t) !== -1);
                     }
                 }
 
                 var direction = trackTurnOptions[Math.floor(Math.random() * trackTurnOptions.length)];
+
 
                 if (i === 0) {
                     direction = RIGHT;
@@ -162,10 +183,19 @@
                     trackTurns.push(direction);
 
                 }
-                var newLevel = me.addToTrackMap(left, top, currentLevel);
+                var newLevel = me.addToTrackMap(left, top, currentLevel, trackWidth, i);
+                samedirection = newLevel !== currentLevel ? NUMBER_OF_LEVEL_TRANSITIONS : 0;
+                if (samedirection && lastTrack) {
+                    direction = lastTrack.direction;
+                    samedirection = samedirection - 1;
+                    if (samedirection < 0) {
+                        samedirection = 0;
+                    }
+                }
                 var track = new Track(new Point(left, top), new Point(left + width, top + height), direction, newLevel, newLevel !== currentLevel);
                 track.index = i;
                 currentLevel = newLevel;
+                trackBeforeLast = lastTrack;
                 lastTrack = track;
                 switch (direction) {
                     case LEFT:
@@ -207,10 +237,14 @@
                 });
                 recordings.scores = current_agents.sort((a, b) => {
                     return b.score() - a.score();
-                }).map(t => t.score());
+                }).map(t => ({ id: t.id, score: t.score() }));
                 // best_agents.map(t => console.log(t.score()));
                 COMPLETE = false;
-                best_brains = best_agents.map(t => t.brain.toJSON());
+                best_brains = best_agents.map(t => {
+                    var json = t.brain.toJSON();
+                    json.name = t.name;
+                    return json;
+                });
                 settings = best_agents.map(t => t.settings());
                 console.log(current_agents.map(t => t.score()));
                 DWD.generation++;
@@ -260,8 +294,10 @@
                 RECORDINGS.map((record, ri) => {
                     recs += '<div><a id="record' + ri + '">record ' + ri + '</a></div>'
                 })
-                this.actors.filter(x => !x.dead).map((t, ind) => {
-                    doc += `<div>Actor ${ind} : (${t.score()})</div>`
+                this.actors.sort((a, b) => {
+                    return b.score() - a.score();
+                }).filter(x => !x.dead).map((t, ind) => {
+                    doc += `<div>${t.name || 'Actor'} ${ind} : (${t.score()})</div>`
                 })
                 AGENTS_ORDERED = this.actors.filter(x => !x.dead).sort((b, a) => {
                     if (a.trackIndex === b.trackIndex) {
@@ -349,11 +385,12 @@
             var mouseY = this.inputManager.mouseY;
             this.context.strokeStyle = "#FF0000",
                 this.context.beginPath();
+            var size = MAX_DISTANCE_OF_EFFECT;
             for (var i = 0; i < this.hitpoints.length; i++) {
                 var hitpoint = this.hitpoints[i];
                 this.context.moveTo(mouseX, mouseY);
                 this.context.lineTo(hitpoint.x, hitpoint.y);
-                this.context.fillRect(hitpoint.x - 5, hitpoint.y - 5, 10, 10);
+                this.context.fillRect(hitpoint.x - size / 2, hitpoint.y - size / 2, size, size);
             }
             this.context.stroke();
             // this.context.restore();
@@ -364,7 +401,7 @@
                 var actor = this.actors[i];
                 if (activeLevel === actor.trackLevel()) {
                     this.context.fillStyle = window.actorColors[i];
-                    this.context.fillRect(actor.x - 5, actor.y - 5, 10, 10);
+                    this.context.fillRect(actor.x - (size / 2), actor.y - (size / 2), size, size);
                 }
             }
 
@@ -376,6 +413,7 @@
             var maxx, minx, maxy, miny;
             var me = this;
             this.level = level;
+            this.direction = direction;
             this.transitionLevel = transitionLevel;
             [p1, p2].map(point => {
                 if (maxx === undefined || maxx < point.x) {
@@ -500,6 +538,7 @@
 
         function Wall(p1, p2) {
             this.p1 = p1;
+            this.open = false;
             this.position = null;
             this.p2 = new Point(p2.x, p2.y);
             this.p1.parent = this;
@@ -516,6 +555,8 @@
             }
             this.toJson = function () {
                 return {
+                    open: this.open,
+                    position: this.position,
                     p1: p1.toJson(),
                     p2: p2.toJson()
                 }
@@ -628,6 +669,7 @@
             this.delta = .1;
             this.track = null;
             this.x = x;
+            this.name = RACE_CAR_NAMES[Math.floor(Math.random() * RACE_CAR_NAMES.length)];
             this.direction = false;
             this.currentDirection = LEFT;
             this.directionAngle = 0;
@@ -662,6 +704,8 @@
                     direction = this.lastPosition.sub(new Point(this.x, this.y)).unit();
                 }
                 return {
+                    id: this.id,
+                    name: this.name,
                     x: this.x,
                     y: this.y,
                     direction,
@@ -766,6 +810,10 @@
             },
             remove: function () {
 
+            },
+            kill: function () {
+                if (this.trackIndex > DEAD_AFTER)
+                    this.dead = true;
             },
             backward: function () {
                 if (this.dead) return;
@@ -892,7 +940,10 @@
                         var temp = vector.sub(new Point(actor.x, actor.y));
                         var len = temp.length();
                         if (len < MAX_DISTANCE_OF_EFFECT) {
-                            result = result.add(temp.multiply(1 - ((len / MAX_DISTANCE_OF_EFFECT) * (len / MAX_DISTANCE_OF_EFFECT))));
+                            result = result.add(temp.multiply(1 - (Math.pow(len / MAX_DISTANCE_OF_EFFECT, 5))));
+                            if (len < DEAD_DISTANCE) {
+                                me.kill();
+                            }
                         }
                     }
                 })
@@ -911,7 +962,7 @@
                         }
                         var len = temp.length();
                         if (len < MAX_DISTANCE_OF_EFFECT) {
-                            result = result.add(temp.multiply(1 - ((len / MAX_DISTANCE_OF_EFFECT) * (len / MAX_DISTANCE_OF_EFFECT))));
+                            result = result.add(temp.multiply(1 - (Math.pow(len / MAX_DISTANCE_OF_EFFECT, 2))));
                         }
                     })
                 }
@@ -938,6 +989,10 @@
             thrustX = this.thrust * dir.x + avoidVector.x * this.thrustAvoidence;
             thrustY = this.thrust * dir.y + avoidVector.y * this.thrustAvoidence;
             var bThrust;
+            var refactorThrust = new Point(thrustX, thrustY);
+            refactorThrust = refactorThrust.makeLength(this.thrust);
+            thrustX = refactorThrust.x;
+            thrustY = refactorThrust.y;
             var bonusThrust = this.bonusThrust;
             var pollPosition = AGENTS_ORDERED.indexOf(this);
             if (pollPosition !== -1) {
@@ -1090,34 +1145,43 @@
         }
 
         function startRl() {
-            var total_number_of_agents = AGENT_COUNT;
+            var total_number_of_agents = window.onlyKeepBest ? MAX_KEEP : AGENT_COUNT;
+            var row = Math.floor(Math.sqrt(total_number_of_agents));
             var rlService = rl({
                 agents: ([...new Array(total_number_of_agents)]).map((t, i) => {
+                    var y = Math.floor(i / row);
+                    var x = i % row;
                     var agent = new Actor({
-                        x: trackWidth / 2,
-                        y: trackWidth / 2
+                        x: (x * trackWidth / row) + (trackWidth / row / 2),
+                        y: (y * trackWidth / row) + (trackWidth / row / 2) + (x % 2 ? trackWidth / row / 4 : -trackWidth / row / 4)
                     });
                     if (best_brains && best_brains[i % total_number_of_agents]) {
                         agent.brainConfig = best_brains[i];
+                        agent.name = agent.brainConfig.name;
                     }
                     if (settings && settings[i % total_number_of_agents]) {
-                        if (i < MAX_KEEP) {
+                        if (window.onlyKeepBest) {
                             agent.set(settings[i % total_number_of_agents]);
                         }
-                        else if (i < MAX_KEEP + NEW_AGENTS) {
-                            agent.set([MAX_THRUST, MAX_FRICTION, MAX_AVOIDENCE_THRUST, MAX_BONUS_THRUST].map(x => {
-                                return x * Math.random();
-                            }))
-                        }
                         else {
-                            var set1 = settings[Math.floor(Math.random() * settings.length)];
-                            var set2 = settings[Math.floor(Math.random() * settings.length)];
-                            agent.set(set1.map((t, i) => {
-                                if (Math.random() > .5) {
-                                    return t;
-                                }
-                                return set2[i];
-                            }));
+                            if (i < MAX_KEEP) {
+                                agent.set(settings[i % total_number_of_agents]);
+                            }
+                            else if (i < MAX_KEEP + NEW_AGENTS) {
+                                agent.set([MAX_THRUST, MAX_FRICTION, MAX_AVOIDENCE_THRUST, MAX_BONUS_THRUST].map(x => {
+                                    return x * Math.random();
+                                }))
+                            }
+                            else {
+                                var set1 = settings[Math.floor(Math.random() * settings.length)];
+                                var set2 = settings[Math.floor(Math.random() * settings.length)];
+                                agent.set(set1.map((t, i) => {
+                                    if (Math.random() > .5) {
+                                        return t;
+                                    }
+                                    return set2[i];
+                                }));
+                            }
                         }
                     }
                     else {
@@ -1150,6 +1214,201 @@
             rlService.agents = world.agents;
             return rlService;
         }
+        const RACE_CAR_NAMES = [
+            "Hammer",
+            "Slugs",
+            "Prestige",
+            "Pitstop",
+            "Shadow",
+            "Dynamite",
+            "Breeze",
+            "Rubberburn",
+            "Knight",
+            "Proto",
+            "Starflal",
+            "Tank",
+            "Frosty",
+            "Airjack",
+            "Savage",
+            "Swifty",
+            "Burnout",
+            "Gridline",
+            "Throttle",
+            "Pocket Rocket",
+            "Sandbag",
+            "Backpain",
+            "Earthquake",
+            "Holeshot",
+            "T-Bone",
+            "Magic Feet",
+            "Matrix",
+            "Shortshift",
+            "Lightning",
+            "Indy",
+            "Goose",
+            "Babe",
+            "Babe",
+            "Nitro",
+            "Viper",
+            "Indy",
+            "Reflex",
+            "Wings",
+            "Velocity",
+            "Lollipop",
+            "Buster",
+            "Carnage",
+            "Rush",
+            "Lionheart",
+            "Prodigy",
+            "Tandem",
+            "Shade",
+            "Formula Zero",
+            "Nemo",
+            "Chaser",
+            "Dynasty",
+            "Scorch",
+            "Butch",
+            "Rusty",
+            "Rusty",
+            "Scrub",
+            "Rodeo",
+            "Bunny",
+            "Flopper",
+            "Red",
+            "Spunk",
+            "Duster",
+            "Wheelie",
+            "Fearless",
+            "Thriller",
+            "Salty",
+            "Twitch",
+            "Zoomer",
+            "Digger",
+            "Blizzard",
+            "Typhoon",
+            "Diesel",
+            "Redline",
+            "Skipper",
+            "Hunter/Huntress",
+            "Brute Force",
+            "Clutch",
+            "Slingshot",
+            "Quickshift",
+            "Bolt",
+            "Smooth Ride",
+            "Spark",
+            "Lucky",
+            "Dodger",
+            "Groovey",
+            "Havoc",
+            "Grenade",
+            "Freebird",
+            "Blower",
+            "Blondey",
+            "Foxy",
+            "Showtime",
+            "Newbie",
+            "Wolf",
+            "Chase",
+            "Bullet",
+            "Fireball",
+            "Scooter",
+            "Mr/Miss Menace",
+            "Kit",
+            "Evasive",
+            "Handsome",
+            "Baby Face",
+            "Hybrid",
+            "Gogo",
+            "Comet",
+            "Hurricane",
+            "Ace",
+            "Speedstar",
+            "Maverick",
+            "Hotflash",
+            "Iceheart",
+            "Smokey",
+            "Comeback Kid",
+            "Frozenheart",
+            "Snake",
+            "Gravels",
+            "Junior",
+            "Wheelspin",
+            "Zoomzoom",
+            "Muscles",
+            "Baron/Baroness",
+            "Meatball",
+            "Rustle",
+            "Golden Kid",
+            "Fatality",
+            "Buddy",
+            "Hairpin",
+            "Mouse",
+            "White Smoke",
+            "Apex",
+            "Cannonball",
+            "Jolt",
+            "Jumper",
+            "Little Stint",
+            "Sprint",
+            "Delta",
+            "Enigma",
+            "Blowover",
+            "Lightspeed",
+            "Outlaw",
+            "Flash",
+            "Forza",
+            "Prototype",
+            "Chopper",
+            "Wild Thing",
+            "Fury",
+            "Straightline",
+            "Blue Devil",
+            "General",
+            "Red Devil",
+            "Dodge",
+            "Rocketeer",
+            "Kid",
+            "Glacier",
+            "Shakey",
+            "Wonderkid",
+            "Freestyle",
+            "Mongoose",
+            "Headway",
+            "Xelarate",
+            "Zero",
+            "Crimson",
+            "Bandit",
+            "Big Beat",
+            "Skip",
+            "Kamikaze",
+            "Railer",
+            "Echelon",
+            "Blade",
+            "Zigzag",
+            "Brute",
+            "Bomber",
+            "Leadfoot",
+            "Colonel",
+            "Drift",
+            "Turbo",
+            "Tasmanian Devil",
+            "Blackjack",
+            "Swirl",
+            "Spirit",
+            "Fence",
+            "Rubber",
+            "Zero Light",
+            "The Comeback",
+            "Helmet Hair",
+            "Lightning Bolt",
+            "Drifter",
+            "Friction",
+            "Momento",
+            "Oracle",
+            "Mad Max",
+            "Honker"
+        ]
     </script>
 </body>
 
